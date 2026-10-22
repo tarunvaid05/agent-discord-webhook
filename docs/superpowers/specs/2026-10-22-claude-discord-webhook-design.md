@@ -48,7 +48,8 @@ are free, need no bot, and the Discord mobile app pushes channel messages.
 - Losing a blocker notification because a batching window or a mute swallowed
   it. Blockers always send.
 - Posting secrets: never log or echo the webhook URL; never include tool input
-  beyond a truncated command summary.
+  beyond a truncated command summary. Post with `allowed_mentions: {parse: []}`
+  so agent text containing `@everyone` pings nobody.
 - Slowing the agent: hooks must return instantly from the agent's point of
   view (async hooks, no network on the agent's critical path).
 - Breaking the user's existing hooks in `~/.claude/settings.json` or
@@ -97,7 +98,7 @@ Hooks are registered `async`, so the sleep never blocks the agent. State lives
 in `~/.local/state/claude-discord-webhook/`:
 
 - `sessions.json` — map of `session_id` → `{alias, tool, cwd, last_prompt_at,
-  last_seen_at}`.
+  last_seen_at, last_stop_at, last_assistant_message, notified_for_stop}`.
 - `spool/` — one JSON file per pending notification.
 - `lock` — flock file for the flusher.
 - `mute_until` — optional file holding a Unix timestamp.
@@ -121,7 +122,7 @@ in `~/.local/state/claude-discord-webhook/`:
 |---|---|---|
 | Claude | `Stop` | done (subject to short-turn suppression) |
 | Claude | `Notification` / `permission_prompt` | blocked: permission |
-| Claude | `Notification` / `idle_prompt` | blocked: waiting for input |
+| Claude | `Notification` / `idle_prompt` | late done (see suppression); never a blocker |
 | Claude | `Notification` / `agent_needs_input`, `elicitation_dialog` | blocked: question |
 | Codex | `Stop` | done (subject to short-turn suppression) |
 | Codex | `PermissionRequest` | blocked: permission (`tool_name` + truncated command) |
@@ -130,21 +131,38 @@ in `~/.local/state/claude-discord-webhook/`:
 
 Everything else, including subagent events, is not registered.
 
-### Short-turn suppression ("am I at the keyboard?")
+### Short-turn suppression and idle follow-up ("am I at the keyboard?")
 
-A `done` event is dropped when the turn took less than `min_turn_seconds`
-(default 45), measured from the session's `last_prompt_at` to the `Stop`.
-Reasoning: if you asked something and it answered in 20 seconds you are still
-looking at it; if it ran for 5 minutes you probably walked away. Blocked
-events are never suppressed. `always_notify = true` in config turns the
-heuristic off. If no `last_prompt_at` is known (hook installed mid-session),
-the event is sent.
+Per session, every `Stop` stores `last_assistant_message`, `last_stop_at`, and
+`notified_for_stop = false`.
+
+- If the turn took at least `min_turn_seconds` (default 45), measured from
+  `last_prompt_at` to the `Stop`, send `done` now and set `notified_for_stop`.
+  If `last_prompt_at` is unknown (hook installed mid-session), send.
+- Otherwise send nothing yet. You probably asked something quick and are still
+  looking at the answer.
+- Claude's `idle_prompt` fires about 60 seconds after a turn ends with no new
+  prompt. On `idle_prompt`: if `notified_for_stop` is false, send `done` using
+  the stored tail (label it `done`, duration from the stored timestamps) and
+  set the flag; if already true, drop it. So a short turn you walked away from
+  is reported a minute later, and a long turn is never reported twice.
+- Codex has no idle event, so Codex short turns that you walk away from are
+  not reported. Accepted; `always_notify = true` covers Codex users who want
+  every turn.
+- A prose question from the agent ("Which auth provider should I use?") is a
+  plain `Stop`, not a Notification. It is reported as `done`; the tail shows
+  the question. No special detection.
+- Blocked events (`permission_prompt`, `agent_needs_input`,
+  `elicitation_dialog`, Codex `PermissionRequest`) are never suppressed and
+  do not touch the flag.
+
+Both the immediate and the idle path go through the same spool and batching.
 
 ### Mute
 
 `cdw mute 2h` writes `mute_until`; `cdw unmute` removes it. While muted,
-`done` events are dropped and blocked events still send. Builder's call
-whether mute also covers blockers via a flag; default is as stated.
+`done` events (immediate and idle follow-up) are dropped and blocked events
+still send. `cdw mute 2h --all` also drops blockers.
 
 ### Message format
 
@@ -161,8 +179,8 @@ Bash: rm -rf build/ && make all
 ```
 
 ```
-**[3] claude · claude-text-updates** ❓ waiting for your answer
-Which auth provider should the login page use?
+**[3] claude · claude-text-updates** ❓ needs your answer
+Claude is waiting for your response to a question.
 ```
 
 Rules:
