@@ -1,4 +1,4 @@
-# claude-discord-webhook — design
+# agent-discord-webhook — design
 
 Date: 2026-10-22
 Status: draft, awaiting approval
@@ -95,7 +95,7 @@ Python process:
    into one Discord message, posts it, releases the lock. Losers exit at once.
 
 Hooks are registered `async`, so the sleep never blocks the agent. State lives
-in `~/.local/state/claude-discord-webhook/`:
+in `~/.local/state/agent-discord-webhook/`:
 
 - `sessions.json` — map of `session_id` → `{alias, tool, cwd, last_prompt_at,
   last_seen_at, last_stop_at, last_assistant_message, notified_for_stop}`.
@@ -160,9 +160,9 @@ Both the immediate and the idle path go through the same spool and batching.
 
 ### Mute
 
-`cdw mute 2h` writes `mute_until`; `cdw unmute` removes it. While muted,
+`adw mute 2h` writes `mute_until`; `adw unmute` removes it. While muted,
 `done` events (immediate and idle follow-up) are dropped and blocked events
-still send. `cdw mute 2h --all` also drops blockers.
+still send. `adw mute 2h --all` also drops blockers.
 
 ### Message format
 
@@ -215,12 +215,12 @@ stay on disk and the next invocation retries them.
 - On 429, sleep `retry_after` and retry once. On 5xx or network error, retry
   twice with 2-second backoff, then leave the spool files in place and exit 0.
 - Hooks always exit 0 and print nothing to stdout; failures go to a log file
-  `~/.local/state/claude-discord-webhook/log` (rotated at 1 MB, one backup).
+  `~/.local/state/agent-discord-webhook/log` (rotated at 1 MB, one backup).
   Never block or alter the agent's flow.
 
 ### Configuration
 
-`~/.config/claude-discord-webhook/config.toml`, created by `cdw install` with
+`~/.config/agent-discord-webhook/config.toml`, created by `adw install` with
 mode 0600:
 
 ```toml
@@ -234,19 +234,19 @@ always_notify = false
 `CDW_WEBHOOK_URL` environment variable overrides the file when set (useful for
 tests).
 
-### CLI (`cdw`)
+### CLI (`adw`)
 
 | Command | Does |
 |---|---|
-| `cdw install [--webhook-url URL]` | Writes config (prompts for URL if absent), merges hook entries into `~/.claude/settings.json` and `~/.codex/hooks.json`, creating files if missing. Idempotent: re-running updates in place. Backs up each file to `<file>.bak-<timestamp>` before writing. |
-| `cdw uninstall` | Removes only the entries it added (identified by the command containing `cdw hook`). Leaves config and state. |
-| `cdw hook` | The hook entrypoint; reads stdin. Internal, but documented so the settings file is self-explanatory. |
-| `cdw test` | Posts a sample two-block message to the webhook. |
-| `cdw status` | Shows config path, hook install state per tool, live sessions with aliases, mute state, spool depth. Redacts the webhook URL. |
-| `cdw mute <duration>` / `cdw unmute` | As above. Durations like `30m`, `2h`. |
+| `adw install [--webhook-url URL]` | Writes config (prompts for URL if absent), merges hook entries into `~/.claude/settings.json` and `~/.codex/hooks.json`, creating files if missing. Idempotent: re-running updates in place. Backs up each file to `<file>.bak-<timestamp>` before writing. |
+| `adw uninstall` | Removes only the entries it added (identified by the command containing `adw hook`). Leaves config and state. |
+| `adw hook` | The hook entrypoint; reads stdin. Internal, but documented so the settings file is self-explanatory. |
+| `adw test` | Posts a sample two-block message to the webhook. |
+| `adw status` | Shows config path, hook install state per tool, live sessions with aliases, mute state, spool depth. Redacts the webhook URL. |
+| `adw mute <duration>` / `adw unmute` | As above. Durations like `30m`, `2h`. |
 
 Hook entries written for Claude (`~/.claude/settings.json`), each with
-`"type": "command"`, `"command": "cdw hook"`, `"async": true`, `"timeout": 30`:
+`"type": "command"`, `"command": "adw hook"`, `"async": true`, `"timeout": 30`:
 `Stop`; `Notification` with matcher
 `permission_prompt|idle_prompt|agent_needs_input|elicitation_dialog`;
 `UserPromptSubmit`; `SessionStart`; `SessionEnd`.
@@ -254,22 +254,22 @@ Hook entries written for Claude (`~/.claude/settings.json`), each with
 Hook entries written for Codex (`~/.codex/hooks.json`, same shape):
 `Stop`, `PermissionRequest`, `UserPromptSubmit`, `SessionStart`, `SessionEnd`.
 
-`cdw` must be on PATH for the hook command to resolve from inside the agents;
-install writes the absolute path of the `cdw` executable instead of the bare
+`adw` must be on PATH for the hook command to resolve from inside the agents;
+install writes the absolute path of the `adw` executable instead of the bare
 name to avoid PATH differences.
 
 ### Packaging
 
-- Repo: this directory, `claude-discord-webhook`. Python package
-  `claude_discord_webhook/` with modules roughly: `hook.py` (event handling),
+- Repo: this directory, `agent-discord-webhook`. Python package
+  `agent_discord_webhook/` with modules roughly: `hook.py` (event handling),
   `state.py` (sessions, aliases, spool, lock), `format.py` (pure message
   building), `discord.py` (posting), `install.py`, `cli.py`.
-- `pyproject.toml` with a `cdw` console script, no runtime dependencies,
+- `pyproject.toml` with a `adw` console script, no runtime dependencies,
   `requires-python >= 3.12`. Installed with `uv tool install .` (or `pipx`).
 - Tests with `pytest` (dev dependency only): pure-function tests for tail
   truncation, alias allocation and release, suppression logic, batching
   drain, config merge/unmerge on realistic settings files; one integration
-  test that runs `cdw hook` against a local HTTP server standing in for
+  test that runs `adw hook` against a local HTTP server standing in for
   Discord.
 
 ## Left to the builder
@@ -278,7 +278,7 @@ name to avoid PATH differences.
 - Log format.
 - Whether `SessionStart` assigns the alias eagerly or the first notifying
   event does. Either is acceptable as long as aliases are stable per session.
-- How `cdw install` prompts for the webhook URL when stdin is not a TTY
+- How `adw install` prompts for the webhook URL when stdin is not a TTY
   (probably: error with instructions).
 - README content, beyond: what it does, install, config keys, how to get a
   webhook URL from Discord channel settings, how to enable push for that
