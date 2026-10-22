@@ -158,6 +158,46 @@ Per session, every `Stop` stores `last_assistant_message`, `last_stop_at`, and
 
 Both the immediate and the idle path go through the same spool and batching.
 
+### Headless and nested sessions are ignored
+
+Decided: sessions nobody is watching must not notify or consume an alias.
+Cases: `claude -p`, `codex exec`, cron/scripts, and one agent spawning another
+(Claude running Codex as a reviewer). The hook treats a session as headless if
+any of these hold, checked in this order, and then exits without touching
+state:
+
+1. **Claude environment (verified on this machine, Claude Code 2.1.307):**
+   under `claude -p` the hook process sees `CLAUDE_CODE_ENTRYPOINT=sdk-cli`,
+   `CLAUDE_CODE_SESSION_ATTENDED=0`, and `CLAUDE_CODE_CHILD_SESSION=1`.
+   Headless if `CLAUDE_CODE_SESSION_ATTENDED` is `0`, or
+   `CLAUDE_CODE_CHILD_SESSION` is `1`, or `CLAUDE_CODE_ENTRYPOINT` is
+   `sdk-cli`. The builder must confirm an interactive session reports
+   `CLAUDE_CODE_SESSION_ATTENDED=1` (or unset) by installing a stdin/env dump
+   hook and running one interactive turn; this is the first task of the plan.
+2. **Process ancestry (both tools):** walk `/proc/<pid>/stat` parent chain
+   from the hook process. The first `claude` or `codex` process found is the
+   session's own host. If a second `claude` or `codex` process appears further
+   up the chain, the session is nested inside another agent: headless. Match
+   on the process `comm` name; the `cmdline` may be `node .../claude`, so also
+   match a cmdline whose first path component ends in `/claude` or `/codex`.
+   Verified: a process spawned by Claude's Bash tool has `claude` as an
+   ancestor and no controlling terminal.
+3. **Codex exec:** no environment signal verified yet. An isolated
+   `CODEX_HOME` test could not run (model metadata missing in the isolated
+   home, and the hooks never fired there). The builder must run `codex exec`
+   with a dump hook in the real `~/.codex/hooks.json` and record which of
+   these distinguish it: a `source`/`originator` value in the `SessionStart`
+   payload (the session file shows `originator: codex_exec`, `source: exec`),
+   any `CODEX_*` environment variable, or absence of a controlling terminal
+   (`open('/dev/tty')` fails with `ENXIO`). Use the payload field if present,
+   else the environment, else the terminal check. Note that the terminal
+   check alone is unsafe until confirmed, because Claude's own hooks also run
+   without `/dev/tty` when spawned by its Bash tool.
+
+A `skip_cwd_patterns` list in config (glob on `cwd`) is an escape hatch for
+anything the heuristics miss. Headless detection is logged at debug level so
+a wrongly-skipped session can be diagnosed with `adw status --log`.
+
 ### Mute
 
 `adw mute 2h` writes `mute_until`; `adw unmute` removes it. While muted,
