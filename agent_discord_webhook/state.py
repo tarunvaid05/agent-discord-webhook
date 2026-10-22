@@ -9,14 +9,19 @@ import json
 import logging
 import os
 import tempfile
+import time
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import IO
+
+from .format import Block
 
 STALE_SECONDS = 12 * 3600
 SESSIONS_FILE = "sessions.json"
 STATE_LOCK = "state.lock"
 MUTE_FILE = "mute_until"
+SPOOL_DIR = "spool"
+FLUSHER_LOCK = "lock"
 
 
 @dataclasses.dataclass
@@ -130,3 +135,41 @@ def mute_state(state_dir: Path, now: float) -> tuple[bool, bool]:
     if now >= until:
         return (False, False)
     return (True, len(parts) > 1 and parts[1] == "all")
+
+
+def spool_append(state_dir: Path, block: Block) -> Path:
+    spool = state_dir / SPOOL_DIR
+    spool.mkdir(exist_ok=True)
+    path = spool / f"{time.time_ns()}-{os.getpid()}.json"
+    _atomic_write(path, json.dumps(block.to_dict()))
+    return path
+
+
+def spool_depth(state_dir: Path) -> int:
+    spool = state_dir / SPOOL_DIR
+    return sum(1 for p in spool.glob("*.json")) if spool.is_dir() else 0
+
+
+def spool_drain(state_dir: Path, log: logging.Logger) -> list[tuple[Path, Block]]:
+    spool = state_dir / SPOOL_DIR
+    out: list[tuple[Path, Block]] = []
+    if not spool.is_dir():
+        return out
+    for path in sorted(spool.glob("*.json")):
+        try:
+            out.append((path, Block.from_dict(json.loads(path.read_text()))))
+        except (ValueError, TypeError, KeyError) as e:
+            log.warning("spool file %s unreadable (%s); dropped", path.name, type(e).__name__)
+            with contextlib.suppress(OSError):
+                path.unlink()
+    return out
+
+
+def try_flusher_lock(state_dir: Path) -> IO[str] | None:
+    f = open(state_dir / FLUSHER_LOCK, "a+")
+    try:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        f.close()
+        return None
+    return f

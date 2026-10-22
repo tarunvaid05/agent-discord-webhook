@@ -65,3 +65,30 @@ def test_mute_roundtrip(tmp_path):
     assert mute_state(tmp_path, 50.0) == (True, True)
     clear_mute(tmp_path)
     assert mute_state(tmp_path, 50.0) == (False, False)
+
+
+def test_spool_append_drain_order_and_corrupt_skipped(tmp_path):
+    from agent_discord_webhook.format import Block
+    from agent_discord_webhook.state import spool_append, spool_depth, spool_drain
+
+    (tmp_path / "spool").mkdir()
+    log = logging.getLogger("t")
+    p1 = spool_append(tmp_path, Block(1, "claude", "d", "done", "first"))
+    p2 = spool_append(tmp_path, Block(2, "codex", "d", "done", "second"))
+    bad = tmp_path / "spool" / "0000000000-1.json"
+    bad.write_text("{")
+    assert spool_depth(tmp_path) == 3
+    drained = spool_drain(tmp_path, log)
+    assert [b.body for _, b in drained] == ["first", "second"]
+    assert [p for p, _ in drained] == [p1, p2]
+    assert not bad.exists()
+
+
+def test_try_flusher_lock_exclusive(tmp_path):
+    from agent_discord_webhook.state import try_flusher_lock
+
+    held = try_flusher_lock(tmp_path)
+    assert held is not None
+    assert try_flusher_lock(tmp_path) is None
+    held.close()
+    assert try_flusher_lock(tmp_path) is not None
