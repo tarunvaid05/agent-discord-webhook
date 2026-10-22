@@ -118,3 +118,131 @@ def handle_event(
         return Block(s.alias, tool, _dirname(cwd), "permission", _blocked_body(f"{tool_name}: {summary}"))
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Runner: stdin -> state -> spool -> flush
+# ---------------------------------------------------------------------------
+
+import contextlib  # noqa: E402
+import logging  # noqa: E402
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+import time  # noqa: E402
+from collections.abc import Callable  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import IO  # noqa: E402
+
+from . import discord, headless  # noqa: E402
+from .config import get_logger, load_config, state_dir  # noqa: E402
+from .format import render_posts, username_for  # noqa: E402
+from .state import mute_state, spool_append, spool_drain, try_flusher_lock  # noqa: E402
+
+PostFn = Callable[..., discord.Outcome]
+
+
+def flush(
+    sd: Path,
+    config: Config,
+    log: logging.Logger,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    post: PostFn = discord.post,
+) -> None:
+    entries = spool_drain(sd, log)
+    if not entries:
+        return
+    if not config.webhook_url:
+        log.error("no webhook URL configured; %d spool files left", len(entries))
+        return
+    blocks = [b for _, b in entries]
+    username = username_for(blocks)
+    for p in render_posts(blocks):
+        outcome = post(config.webhook_url, p.content, username, log, sleep=sleep)
+        if outcome is discord.Outcome.RETRYABLE:
+            log.warning("post failed; %d block(s) left in spool", len(entries))
+            return
+        for i in p.block_indices:
+            with contextlib.suppress(OSError):
+                entries[i][0].unlink()
+        if outcome is discord.Outcome.PERMANENT:
+            log.error("dropped %d block(s) after permanent failure", len(p.block_indices))
+
+
+def run_flusher(
+    sd: Path,
+    config: Config,
+    log: logging.Logger,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    post: PostFn = discord.post,
+) -> None:
+    held = try_flusher_lock(sd)
+    if held is None:
+        log.debug("flusher already running")
+        return
+    try:
+        sleep(config.batch_window_seconds)
+        flush(sd, config, log, sleep=sleep, post=post)
+    finally:
+        held.close()
+
+
+def spawn_detached_flusher(env: Mapping[str, str]) -> None:
+    subprocess.Popen(
+        [sys.executable, "-m", "agent_discord_webhook.cli", "flush"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True, env=dict(env), close_fds=True,
+    )
+
+
+def run_hook(
+    tool: str,
+    stdin: IO[str],
+    env: Mapping[str, str],
+    *,
+    now: Callable[[], float] = time.time,
+    sleep: Callable[[float], None] = time.sleep,
+    post: PostFn = discord.post,
+    read_proc: headless.ProcReader = headless.default_read_proc,
+    tty: Callable[[], bool] = headless.has_controlling_tty,
+    detach: bool = False,
+) -> int:
+    log = get_logger(env)
+    try:
+        try:
+            payload = json.loads(stdin.read())
+        except ValueError as e:
+            log.warning("unreadable hook payload (%s)", type(e).__name__)
+            return 0
+        if not isinstance(payload, dict):
+            log.warning("hook payload is not an object")
+            return 0
+        config = load_config(env)
+        sd = state_dir(env)
+        cwd = str(payload.get("cwd", ""))
+        ancestors = headless.ancestor_agents(os.getpid(), read_proc)
+        reason = headless.headless_reason(tool, payload, env, cwd, config.skip_cwd_patterns, ancestors, tty())
+        if reason:
+            log.debug("headless %s session=%s tool=%s event=%s", reason, payload.get("session_id"), tool,
+                      payload.get("hook_event_name"))
+            return 0
+        if not config.webhook_url:
+            log.error("no webhook URL configured; run `adw install`")
+            return 0
+        t = now()
+        store = SessionStore(sd, log)
+        with store.locked() as sessions:
+            store.sweep(sessions, t)
+            block = handle_event(tool, payload, sessions, store, config, mute_state(sd, t), t)
+        if block is None:
+            return 0
+        spool_append(sd, block)
+        log.debug("spooled %s for [%d] %s", block.kind, block.alias, block.dirname)
+        if detach:
+            spawn_detached_flusher(env)
+        else:
+            run_flusher(sd, config, log, sleep=sleep, post=post)
+    except Exception:
+        log.exception("hook failed")
+    return 0

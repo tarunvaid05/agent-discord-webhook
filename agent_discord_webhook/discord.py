@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import json
 import logging
 import time
@@ -13,6 +14,15 @@ from collections.abc import Callable
 USER_AGENT = "agent-discord-webhook"
 NETWORK_RETRIES = 2
 NETWORK_BACKOFF = 2.0
+
+
+class Outcome(enum.Enum):
+    OK = "ok"
+    RETRYABLE = "retryable"      # 5xx, network error, or 429 twice: keep the spool
+    PERMANENT = "permanent"      # other 4xx: the webhook is gone, drop the spool
+
+    def __bool__(self) -> bool:
+        return self is Outcome.OK
 
 
 def redact(url: str) -> str:
@@ -41,7 +51,7 @@ def post(
     *,
     timeout: float = 10.0,
     sleep: Callable[[float], None] = time.sleep,
-) -> bool:
+) -> Outcome:
     body = json.dumps({"content": content, "username": username, "allowed_mentions": {"parse": []}}).encode()
     safe = redact(webhook_url)
     rate_limited_once = False
@@ -57,9 +67,9 @@ def post(
                 resp.read()
             if 200 <= status < 300:
                 log.debug("posted %d chars to %s (%d)", len(content), safe, status)
-                return True
+                return Outcome.OK
             log.error("unexpected status %d from %s", status, safe)
-            return False
+            return Outcome.RETRYABLE
         except urllib.error.HTTPError as e:
             status = e.code
             if status == 429 and not rate_limited_once:
@@ -78,7 +88,7 @@ def post(
                 sleep(NETWORK_BACKOFF)
                 continue
             log.error("post to %s failed with status %d", safe, status)
-            return False
+            return Outcome.RETRYABLE if status == 429 or status >= 500 else Outcome.PERMANENT
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             if network_failures < NETWORK_RETRIES:
                 network_failures += 1
@@ -86,4 +96,4 @@ def post(
                 sleep(NETWORK_BACKOFF)
                 continue
             log.error("post to %s failed: %s", safe, _safe_error(e))
-            return False
+            return Outcome.RETRYABLE
