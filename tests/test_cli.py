@@ -106,3 +106,10 @@ def test_install_rejects_non_https_url(tmp_path, capsys):
     assert main(["install", "--webhook-url", "http://discord.com/api/webhooks/1/s"], stdout=io.StringIO(), env=env) == 2
     assert "https://" in capsys.readouterr().err
     assert not (tmp_path / "config.toml").exists() and not (tmp_path / "claude.json").exists()
+
+
+def test_install_rerun_without_url_keeps_configured_one(tmp_path):
+    env = base_env(tmp_path)
+    assert main(["install", "--webhook-url", "https://discord.com/api/webhooks/1/s"], stdout=io.StringIO(), env=env) == 0
+    assert main(["install"], stdin=io.StringIO(""), stdout=io.StringIO(), env=env) == 0
+    assert 'webhook_url = "https://discord.com/api/webhooks/1/s"' in (tmp_path / "config.toml").read_text()

@@ -69,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def cmd_install(args: argparse.Namespace, stdin: IO[str], stdout: IO[str], env: Mapping[str, str], now_dt: datetime) -> int:
-    url = args.webhook_url
+    url = args.webhook_url or load_config(env).webhook_url
     if not url:
         if not stdin.isatty():
             print(URL_REQUIRED, file=sys.stderr)

@@ -65,3 +65,22 @@ def test_write_config_mode_and_content(tmp_path):
     write_config(p, "https://discord.com/api/webhooks/1/x")
     assert oct(p.stat().st_mode & 0o777) == "0o600"
     assert load_config({"ADW_CONFIG_PATH": str(p)}) == Config(webhook_url="https://discord.com/api/webhooks/1/x")
+
+
+def test_write_config_rerun_keeps_user_settings_and_replaces_url(tmp_path):
+    p = tmp_path / "config.toml"
+    write_config(p, "https://discord.com/api/webhooks/1/old")
+    p.write_text(p.read_text().replace("tail_chars = 100", "tail_chars = 50") + 'skip_cwd_patterns = ["/tmp/*"]\n')
+    write_config(p, "https://discord.com/api/webhooks/2/new")
+    cfg = load_config({"ADW_CONFIG_PATH": str(p)})
+    assert cfg.webhook_url == "https://discord.com/api/webhooks/2/new"
+    assert cfg.tail_chars == 50 and cfg.skip_cwd_patterns == ("/tmp/*",)
+    assert p.read_text().count("webhook_url") == 1
+
+
+def test_write_config_adds_url_line_to_config_lacking_one(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text("tail_chars = 70\n")
+    write_config(p, "https://discord.com/api/webhooks/3/x")
+    cfg = load_config({"ADW_CONFIG_PATH": str(p)})
+    assert cfg.webhook_url == "https://discord.com/api/webhooks/3/x" and cfg.tail_chars == 70
