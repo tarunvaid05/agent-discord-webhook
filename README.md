@@ -34,6 +34,14 @@ replacing only the `webhook_url` line; without `--webhook-url` it reuses the
 configured URL. The URL must start with `https://`. Run `adw test` to post a
 sample message.
 
+Codex asks you to trust new hooks the next time it starts ("Hooks need
+review"; press `t` to trust all). It asks again after any change to the
+entries, including re-running `adw install` from a new `adw` path. Claude Code
+picks the hooks up in sessions started after the install.
+
+When upgrading from a checkout, use `uv tool install . --reinstall`; a plain
+reinstall of the same version can reuse a cached build.
+
 ### Getting a webhook URL
 
 In Discord: open the channel you want notifications in, Edit Channel,
@@ -79,7 +87,7 @@ Settings, and choose All Messages. Make sure the server is not muted.
 | Claude Code | permission prompt | `⏸ needs permission` |
 | Claude Code | question or elicitation dialog | `❓ needs your answer` |
 | Codex CLI | turn ends | `✅ done` |
-| Codex CLI | permission request | `⏸ needs permission` with the tool and command |
+| Codex CLI | permission request | `⏸ needs permission` with the tool and command (not yet: Codex 0.145 shows the approval dialog without firing `PermissionRequest`) |
 
 Suppression: a turn shorter than `min_turn_seconds` is not reported when it
 ends, because you probably asked something quick and are still looking at
@@ -91,9 +99,12 @@ reported with `always_notify = true`.
 Permission prompts and questions are never suppressed and still send while
 muted, unless you used `adw mute --all`.
 
-Sessions nobody is watching do not notify: `claude -p`, `codex exec`, and an
-agent started from inside another agent. Use `skip_cwd_patterns` for anything
-the detection misses, and `adw status --log` to see why a session was skipped.
+Sessions nobody is watching do not notify: `claude -p` (from Claude's own
+environment variables), `codex exec` (from the `exec` subcommand on the codex
+process; its hook payload looks the same as an interactive one), and an agent
+started from inside another agent (from the process tree). Use
+`skip_cwd_patterns` for anything the detection misses, and `adw status --log`
+to see why a session was skipped.
 
 ## Where things live
 
