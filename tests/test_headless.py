@@ -42,3 +42,16 @@ def test_codex_exec_signal():
     assert headless_reason("codex", {"originator": "codex_exec"}, {}, "/p", (), ["codex"], False) == "codex_exec"
     assert headless_reason("codex", {"source": "cli"}, {}, "/p", (), ["codex"], False) is None
     assert headless_reason("codex", {}, {}, "/p", (), ["codex"], False) is None
+
+
+def test_npm_codex_wrapper_and_native_child_count_as_one_host():
+    procs = {60: (50, "adw", "/x/adw hook --tool codex"), 50: (40, "sh", "sh -c adw"),
+             40: (30, "codex", "/n/node_modules/@openai/codex/vendor/codex"),
+             30: (20, "node", "node /n/bin/codex"), 20: (1, "bash", "bash"), 1: (0, "systemd", "/sbin/init")}
+    assert ancestor_agents(60, lambda p: procs.get(p)) == ["codex"]
+
+
+def test_agent_run_from_shell_inside_same_agent_is_nested():
+    procs = {60: (50, "adw", "/x/adw hook --tool codex"), 50: (40, "sh", "sh"), 40: (30, "codex", "/y/codex"),
+             30: (20, "bash", "bash"), 20: (1, "codex", "/y/codex"), 1: (0, "systemd", "/sbin/init")}
+    assert ancestor_agents(60, lambda p: procs.get(p)) == ["codex", "codex"]

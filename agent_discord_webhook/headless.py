@@ -41,8 +41,15 @@ def _agent_of(comm: str, cmdline: str) -> str | None:
 
 
 def ancestor_agents(pid: int, read_proc: ProcReader) -> list[str]:
+    """Agent processes above `pid`, nearest first.
+
+    An agent whose direct parent is the same agent (npm wrapper `node codex` -> native
+    `codex`) is one host, not a nested session; only a non-agent process in between
+    (a shell the agent spawned) separates two sessions.
+    """
     found: list[str] = []
     seen: set[int] = set()
+    prev_was_agent = False
     while pid > 1 and pid not in seen:
         seen.add(pid)
         info = read_proc(pid)
@@ -50,7 +57,12 @@ def ancestor_agents(pid: int, read_proc: ProcReader) -> list[str]:
             break
         ppid, comm, cmdline = info
         if is_agent_process(comm, cmdline):
-            found.append(_agent_of(comm, cmdline) or comm)
+            name = _agent_of(comm, cmdline) or comm
+            if not (prev_was_agent and found and found[-1] == name):
+                found.append(name)
+            prev_was_agent = True
+        else:
+            prev_was_agent = False
         pid = ppid
     return found
 
