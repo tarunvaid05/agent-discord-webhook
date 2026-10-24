@@ -160,3 +160,22 @@ def test_hook_failure_log_names_exception_type_without_its_message(tmp_path):
     assert run_hook("claude", io.StringIO(stop_payload("S1", "x")), env, **NOOP | {"post": exploding_post}) == 0
     text = (Path(env["ADW_STATE_DIR"]) / "log").read_text()
     assert "RuntimeError" in text and "secret-token" not in text
+
+
+def codex_event(name, sid, **k):
+    return json.dumps({"hook_event_name": name, "session_id": sid, "cwd": "/home/u/proj", **k})
+
+
+def test_codex_exec_session_stays_silent_after_sessionstart(tmp_path):
+    with FakeDiscord() as fd:
+        env = env_for(tmp_path, fd.url)
+        sd = Path(env["ADW_STATE_DIR"])
+        run_hook("codex", io.StringIO(codex_event("SessionStart", "X1", source="exec")), env, **NOOP)
+        run_hook("codex", io.StringIO(codex_event("Stop", "X1", last_assistant_message="scripted")), env, **NOOP)
+        run_hook("codex", io.StringIO(codex_event("PermissionRequest", "X1", tool_name="Bash", tool_input={"command": "ls"})), env, **NOOP)
+        assert fd.requests == [] and spool_depth(sd) == 0
+        # an attended session alongside it still notifies and gets alias 1
+        run_hook("codex", io.StringIO(codex_event("Stop", "I1", last_assistant_message="live")), env, **NOOP)
+        assert len(fd.requests) == 1 and fd.requests[0]["content"].startswith("**[1] codex")
+        run_hook("codex", io.StringIO(codex_event("SessionEnd", "X1")), env, **NOOP)
+        assert "X1" not in json.loads((sd / "sessions.json").read_text())

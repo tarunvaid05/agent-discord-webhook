@@ -147,7 +147,7 @@ def cmd_status(args: argparse.Namespace, stdout: IO[str], env: Mapping[str, str]
         print("mute: off", file=stdout)
     print(f"spool: {spool_depth(sd)}", file=stdout)
     sessions = SessionStore(sd, get_logger(env)).load()
-    for s in sorted(sessions.values(), key=lambda x: x.alias):
+    for s in sorted((s for s in sessions.values() if not s.headless), key=lambda x: x.alias):
         seen = datetime.fromtimestamp(s.last_seen_at).isoformat(timespec="seconds")
         print(f"[{s.alias}] {s.tool} {s.cwd} last seen {seen}", file=stdout)
     if args.log:

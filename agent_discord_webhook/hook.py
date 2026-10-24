@@ -75,6 +75,8 @@ def handle_event(
         return None
 
     s = store.touch(sessions, session_id, tool, cwd, now)
+    if s.headless:
+        return None
 
     if event == "UserPromptSubmit":
         s.last_prompt_at = now
@@ -238,9 +240,16 @@ def run_hook(
         cwd = str(payload.get("cwd", ""))
         ancestors = headless.ancestor_agents(os.getpid(), read_proc)
         reason = headless.headless_reason(tool, payload, env, cwd, config.skip_cwd_patterns, ancestors, tty())
+        session_id = payload.get("session_id")
         if reason:
-            log.debug("headless %s session=%s tool=%s event=%s", reason, payload.get("session_id"), tool,
+            log.debug("headless %s session=%s tool=%s event=%s", reason, session_id, tool,
                       payload.get("hook_event_name"))
+            if reason == "codex_exec" and isinstance(session_id, str) and session_id:
+                # The exec signal rides only on SessionStart; remember the session so its
+                # Stop and PermissionRequest events stay silent too.
+                store = SessionStore(sd, log)
+                with store.locked() as sessions:
+                    store.mark_headless(sessions, session_id, tool, cwd, now())
             return 0
         if not config.webhook_url:
             log.error("no webhook URL configured; run `adw install`")

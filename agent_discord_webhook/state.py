@@ -34,6 +34,7 @@ class Session:
     last_stop_at: float | None = None
     last_assistant_message: str = ""
     notified_for_stop: bool = False
+    headless: bool = False  # classified unattended once (codex exec); later events are dropped
 
     def to_dict(self) -> dict:
         return dataclasses.asdict(self)
@@ -108,6 +109,14 @@ class SessionStore:
             sessions[session_id] = s
         s.tool, s.cwd, s.last_seen_at = tool, cwd, now
         return s
+
+    def mark_headless(self, sessions: dict[str, Session], session_id: str, tool: str, cwd: str, now: float) -> None:
+        """Remember an unattended session without spending an alias on it."""
+        s = sessions.get(session_id)
+        if s is None:
+            s = Session(alias=0, tool=tool, cwd=cwd, last_seen_at=now, headless=True)
+            sessions[session_id] = s
+        s.tool, s.cwd, s.last_seen_at, s.headless = tool, cwd, now, True
 
     def end(self, sessions: dict[str, Session], session_id: str) -> None:
         sessions.pop(session_id, None)
