@@ -239,14 +239,16 @@ def run_hook(
         sd = state_dir(env)
         cwd = str(payload.get("cwd", ""))
         ancestors = headless.ancestor_agents(os.getpid(), read_proc)
-        reason = headless.headless_reason(tool, payload, env, cwd, config.skip_cwd_patterns, ancestors, tty())
+        codex_exec = tool == "codex" and headless.has_codex_exec_ancestor(os.getpid(), read_proc)
+        reason = headless.headless_reason(tool, payload, env, cwd, config.skip_cwd_patterns, ancestors, tty(),
+                                          codex_exec=codex_exec)
         session_id = payload.get("session_id")
         if reason:
             log.debug("headless %s session=%s tool=%s event=%s", reason, session_id, tool,
                       payload.get("hook_event_name"))
             if reason == "codex_exec" and isinstance(session_id, str) and session_id:
-                # The exec signal rides only on SessionStart; remember the session so its
-                # Stop and PermissionRequest events stay silent too.
+                # Belt and braces: remember the session so its later events stay silent even
+                # if the process tree is unreadable for one of them.
                 store = SessionStore(sd, log)
                 with store.locked() as sessions:
                     store.mark_headless(sessions, session_id, tool, cwd, now())

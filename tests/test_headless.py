@@ -1,4 +1,4 @@
-from agent_discord_webhook.headless import ancestor_agents, headless_reason, is_agent_process
+from agent_discord_webhook.headless import ancestor_agents, has_codex_exec_ancestor, headless_reason, is_agent_process
 
 
 def test_claude_env_signals():
@@ -37,11 +37,27 @@ def test_ancestor_agents_walks_chain():
     assert ancestor_agents(50, lambda p: procs.get(p)) == ["claude", "codex"]
 
 
-def test_codex_exec_signal():
-    assert headless_reason("codex", {"source": "exec"}, {}, "/p", (), ["codex"], False) == "codex_exec"
-    assert headless_reason("codex", {"originator": "codex_exec"}, {}, "/p", (), ["codex"], False) == "codex_exec"
-    assert headless_reason("codex", {"source": "cli"}, {}, "/p", (), ["codex"], False) is None
-    assert headless_reason("codex", {}, {}, "/p", (), ["codex"], False) is None
+def test_codex_exec_signal_comes_from_ancestry_not_payload():
+    # Verified on codex 0.145: `codex exec` SessionStart carries source="startup", same as interactive.
+    assert headless_reason("codex", {"source": "startup"}, {}, "/p", (), ["codex"], True, codex_exec=True) == "codex_exec"
+    assert headless_reason("codex", {"source": "startup"}, {}, "/p", (), ["codex"], True, codex_exec=False) is None
+    assert headless_reason("codex", {"source": "exec"}, {}, "/p", (), ["codex"], True) is None
+    assert headless_reason("claude", {}, {}, "/p", (), ["claude"], True, codex_exec=True) is None
+
+
+def test_has_codex_exec_ancestor():
+    exec_chain = {60: (50, "adw", "/x/adw hook --tool codex"), 50: (40, "sh", "sh"),
+                  40: (30, "codex", "/n/@openai/codex-linux-x64/vendor/bin/codex exec -m luna Reply pong"),
+                  30: (20, "node", "node /n/bin/codex exec -m luna Reply pong"), 20: (1, "bash", "bash")}
+    assert has_codex_exec_ancestor(60, lambda p: exec_chain.get(p))
+    tui_chain = {60: (50, "adw", "/x/adw hook --tool codex"), 50: (40, "sh", "sh"),
+                 40: (30, "codex", "/n/vendor/bin/codex -a untrusted -m luna"),
+                 30: (20, "node", "node /n/bin/codex -a untrusted -m luna"), 20: (1, "bash", "bash")}
+    assert not has_codex_exec_ancestor(60, lambda p: tui_chain.get(p))
+    prompt_named_exec = {60: (50, "adw", "adw hook"), 50: (1, "codex", "/y/codex -m luna 'run exec please'")}
+    assert not has_codex_exec_ancestor(60, lambda p: prompt_named_exec.get(p))
+    claude_chain = {60: (50, "adw", "adw hook"), 50: (1, "claude", "claude exec")}
+    assert not has_codex_exec_ancestor(60, lambda p: claude_chain.get(p))
 
 
 def test_npm_codex_wrapper_and_native_child_count_as_one_host():

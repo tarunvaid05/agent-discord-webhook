@@ -166,13 +166,21 @@ def codex_event(name, sid, **k):
     return json.dumps({"hook_event_name": name, "session_id": sid, "cwd": "/home/u/proj", **k})
 
 
-def test_codex_exec_session_stays_silent_after_sessionstart(tmp_path):
+EXEC_CHAIN = {50: (40, "codex", "/n/vendor/bin/codex exec -m luna Reply pong"),
+              40: (1, "node", "node /n/bin/codex exec -m luna Reply pong")}
+
+
+def test_codex_exec_session_stays_silent(tmp_path):
+    import os as _os
+    exec_proc = {_os.getpid(): (50, "adw", "adw hook --tool codex"), **EXEC_CHAIN}
+    under_exec = NOOP | {"read_proc": lambda p: exec_proc.get(p)}
     with FakeDiscord() as fd:
         env = env_for(tmp_path, fd.url)
         sd = Path(env["ADW_STATE_DIR"])
-        run_hook("codex", io.StringIO(codex_event("SessionStart", "X1", source="exec")), env, **NOOP)
-        run_hook("codex", io.StringIO(codex_event("Stop", "X1", last_assistant_message="scripted")), env, **NOOP)
-        run_hook("codex", io.StringIO(codex_event("PermissionRequest", "X1", tool_name="Bash", tool_input={"command": "ls"})), env, **NOOP)
+        run_hook("codex", io.StringIO(codex_event("SessionStart", "X1", source="startup")), env, **under_exec)
+        run_hook("codex", io.StringIO(codex_event("Stop", "X1", last_assistant_message="scripted")), env, **under_exec)
+        run_hook("codex", io.StringIO(codex_event("PermissionRequest", "X1", tool_name="Bash", tool_input={"command": "ls"})), env, **under_exec)
+        assert "codex_exec" in (sd / "log").read_text()
         assert fd.requests == [] and spool_depth(sd) == 0
         # an attended session alongside it still notifies and gets alias 1
         run_hook("codex", io.StringIO(codex_event("Stop", "I1", last_assistant_message="live")), env, **NOOP)

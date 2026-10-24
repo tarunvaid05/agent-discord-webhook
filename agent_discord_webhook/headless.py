@@ -40,6 +40,39 @@ def _agent_of(comm: str, cmdline: str) -> str | None:
     return None
 
 
+def _walk(pid: int, read_proc: ProcReader):
+    seen: set[int] = set()
+    while pid > 1 and pid not in seen:
+        seen.add(pid)
+        info = read_proc(pid)
+        if info is None:
+            return
+        ppid, comm, cmdline = info
+        yield comm, cmdline
+        pid = ppid
+
+
+def is_codex_exec(comm: str, cmdline: str) -> bool:
+    """`codex exec ...`: the first non-option argument after the codex binary is `exec`.
+
+    Verified on codex 0.145: both the npm wrapper (`node .../bin/codex exec ...`) and the
+    native child carry the subcommand; the hook payload does not (source="startup").
+    """
+    if _agent_of(comm, cmdline) != "codex":
+        return False
+    tokens = cmdline.split()
+    start = 2 if tokens and PurePath(tokens[0]).name == "node" else 1
+    for t in tokens[start:]:
+        if t.startswith("-"):
+            continue
+        return t == "exec"
+    return False
+
+
+def has_codex_exec_ancestor(pid: int, read_proc: ProcReader) -> bool:
+    return any(is_codex_exec(comm, cmdline) for comm, cmdline in _walk(pid, read_proc))
+
+
 def ancestor_agents(pid: int, read_proc: ProcReader) -> list[str]:
     """Agent processes above `pid`, nearest first.
 
@@ -48,14 +81,8 @@ def ancestor_agents(pid: int, read_proc: ProcReader) -> list[str]:
     (a shell the agent spawned) separates two sessions.
     """
     found: list[str] = []
-    seen: set[int] = set()
     prev_was_agent = False
-    while pid > 1 and pid not in seen:
-        seen.add(pid)
-        info = read_proc(pid)
-        if info is None:
-            break
-        ppid, comm, cmdline = info
+    for comm, cmdline in _walk(pid, read_proc):
         if is_agent_process(comm, cmdline):
             name = _agent_of(comm, cmdline) or comm
             if not (prev_was_agent and found and found[-1] == name):
@@ -63,7 +90,6 @@ def ancestor_agents(pid: int, read_proc: ProcReader) -> list[str]:
             prev_was_agent = True
         else:
             prev_was_agent = False
-        pid = ppid
     return found
 
 
@@ -96,17 +122,15 @@ def headless_reason(
     skip_cwd_patterns: Sequence[str],
     ancestors: Sequence[str],
     tty: bool,
+    codex_exec: bool = False,
 ) -> str | None:
     if tool == "claude":
         if env.get("CLAUDE_CODE_SESSION_ATTENDED") == "0" or env.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-cli":
             return "env"
     if len(ancestors) >= 2:
         return "nested"
-    if tool == "codex":
-        for key in ("source", "originator"):
-            value = payload.get(key)
-            if isinstance(value, str) and "exec" in value:
-                return "codex_exec"
+    if tool == "codex" and codex_exec:
+        return "codex_exec"
     for pattern in skip_cwd_patterns:
         if fnmatch.fnmatch(cwd, pattern):
             return "skip_cwd"

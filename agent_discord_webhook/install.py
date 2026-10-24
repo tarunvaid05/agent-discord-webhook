@@ -13,6 +13,7 @@ from pathlib import Path
 
 MARKER = "adw hook"
 HOOK_TIMEOUT = 30
+CODEX_SESSION_END_TIMEOUT = 3  # codex 0.145 clamps SessionEnd hooks to 3s and warns above that
 
 CLAUDE_EVENTS: dict[str, str | None] = {
     "Stop": None,
@@ -40,8 +41,11 @@ always_notify = false
 """
 
 
-def hook_entry(adw_path: str, tool: str, matcher: str | None = None) -> dict:
-    hook = {"type": "command", "command": f"{adw_path} hook --tool {tool}", "timeout": HOOK_TIMEOUT}
+def hook_entry(adw_path: str, tool: str, matcher: str | None = None, event: str | None = None) -> dict:
+    timeout = HOOK_TIMEOUT
+    if tool == "codex" and event == "SessionEnd":
+        timeout = CODEX_SESSION_END_TIMEOUT
+    hook = {"type": "command", "command": f"{adw_path} hook --tool {tool}", "timeout": timeout}
     if tool == "claude":
         hook["async"] = True
     entry: dict = {"hooks": [hook]}
@@ -79,7 +83,7 @@ def merge_hooks(settings: dict, adw_path: str, tool: str) -> dict:
     events = CLAUDE_EVENTS if tool == "claude" else CODEX_EVENTS
     hooks = out.setdefault("hooks", {})
     for event, matcher in events.items():
-        hooks.setdefault(event, []).append(hook_entry(adw_path, tool, matcher))
+        hooks.setdefault(event, []).append(hook_entry(adw_path, tool, matcher, event))
     return out
 
 

@@ -50,6 +50,8 @@ def test_codex_events_are_sync():
     assert set(out["hooks"]) == {"Stop", "PermissionRequest", "UserPromptSubmit", "SessionStart", "SessionEnd"}
     entry = out["hooks"]["Stop"][0]["hooks"][0]
     assert entry["command"] == "/opt/adw hook --tool codex" and "async" not in entry and entry["timeout"] == 30
+    # codex 0.145 clamps SessionEnd hook timeouts to 3s and warns on every start otherwise
+    assert out["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"] == 3
 
 
 def test_write_json_with_backup(tmp_path):
