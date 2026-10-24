@@ -136,7 +136,7 @@ from typing import IO  # noqa: E402
 from . import discord, headless  # noqa: E402
 from .config import get_logger, load_config, state_dir  # noqa: E402
 from .format import render_posts, username_for  # noqa: E402
-from .state import mute_state, spool_append, spool_drain, try_flusher_lock  # noqa: E402
+from .state import mute_state, spool_append, spool_depth, spool_drain, try_flusher_lock  # noqa: E402
 
 PostFn = Callable[..., discord.Outcome]
 
@@ -148,25 +148,27 @@ def flush(
     *,
     sleep: Callable[[float], None] = time.sleep,
     post: PostFn = discord.post,
-) -> None:
+) -> bool:
+    """Drain the spool once. Returns False when a retryable failure left blocks behind."""
     entries = spool_drain(sd, log)
     if not entries:
-        return
+        return True
     if not config.webhook_url:
         log.error("no webhook URL configured; %d spool files left", len(entries))
-        return
+        return False
     blocks = [b for _, b in entries]
     username = username_for(blocks)
     for p in render_posts(blocks):
         outcome = post(config.webhook_url, p.content, username, log, sleep=sleep)
         if outcome is discord.Outcome.RETRYABLE:
             log.warning("post failed; %d block(s) left in spool", len(entries))
-            return
+            return False
         for i in p.block_indices:
             with contextlib.suppress(OSError):
                 entries[i][0].unlink()
         if outcome is discord.Outcome.PERMANENT:
             log.error("dropped %d block(s) after permanent failure", len(p.block_indices))
+    return True
 
 
 def run_flusher(
@@ -183,9 +185,19 @@ def run_flusher(
         return
     try:
         sleep(config.batch_window_seconds)
-        flush(sd, config, log, sleep=sleep, post=post)
+        ok = flush(sd, config, log, sleep=sleep, post=post)
     finally:
         held.close()
+    # A hook that fired while we held the lock spooled its block and exited, trusting us
+    # to post it. Keep going until the spool is empty or a post fails.
+    while ok and spool_depth(sd) > 0:
+        held = try_flusher_lock(sd)
+        if held is None:
+            return
+        try:
+            ok = flush(sd, config, log, sleep=sleep, post=post)
+        finally:
+            held.close()
 
 
 def spawn_detached_flusher(env: Mapping[str, str]) -> None:

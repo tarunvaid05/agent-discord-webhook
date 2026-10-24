@@ -1,4 +1,5 @@
 import io
+from agent_discord_webhook import discord
 import json
 import logging
 import os
@@ -97,3 +98,37 @@ def test_subprocess_adw_hook_prints_nothing_and_detached_flush_posts(tmp_path):
             time.sleep(0.1)
         assert fd.requests and fd.requests[0]["username"] == "Codex"
         assert spool_depth(Path(env["ADW_STATE_DIR"])) == 0
+
+
+def test_flusher_drains_entries_spooled_while_it_was_posting(tmp_path):
+    from agent_discord_webhook.format import Block
+    from agent_discord_webhook.hook import run_flusher
+    from agent_discord_webhook.state import spool_append
+
+    with FakeDiscord() as fd:
+        env = env_for(tmp_path, fd.url)
+        sd = state_dir(env)
+        spool_append(sd, Block(1, "claude", "proj", "done", "first"))
+        late = iter([Block(2, "claude", "proj", "done", "late")])
+
+        def post(url, content, username, log, **kw):
+            for b in late:  # a hook fires while this POST is in flight; its flusher sees the lock and exits
+                spool_append(sd, b)
+            return discord.post(url, content, username, log, **kw)
+
+        run_flusher(sd, load_config(env), logging.getLogger("t"), sleep=lambda s: None, post=post)
+        assert spool_depth(sd) == 0
+        assert [r["content"].split("\n")[-1] for r in fd.requests] == ["first", "late"]
+
+
+def test_flusher_stops_looping_when_post_keeps_failing(tmp_path):
+    from agent_discord_webhook.format import Block
+    from agent_discord_webhook.hook import run_flusher
+    from agent_discord_webhook.state import spool_append
+
+    with FakeDiscord(script=[500] * 30) as fd:
+        env = env_for(tmp_path, fd.url)
+        sd = state_dir(env)
+        spool_append(sd, Block(1, "claude", "proj", "done", "x"))
+        run_flusher(sd, load_config(env), logging.getLogger("t"), sleep=lambda s: None)
+        assert spool_depth(sd) == 1 and len(fd.requests) == 3

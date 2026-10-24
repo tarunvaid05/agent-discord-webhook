@@ -45,3 +45,10 @@ def test_redact():
 
 def test_outcome_truthiness():
     assert Outcome.OK and not Outcome.RETRYABLE and not Outcome.PERMANENT
+
+
+def test_429_retry_after_is_capped_at_10s():
+    slept = []
+    with FakeDiscord(script=[429], retry_after=120.0) as fd:
+        assert post(fd.url, "x", "Claude", logging.getLogger("t"), sleep=slept.append)
+        assert slept == [10.0] and len(fd.requests) == 2

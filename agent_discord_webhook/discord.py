@@ -14,6 +14,7 @@ from collections.abc import Callable
 USER_AGENT = "agent-discord-webhook"
 NETWORK_RETRIES = 2
 NETWORK_BACKOFF = 2.0
+MAX_RETRY_AFTER = 10.0
 
 
 class Outcome(enum.Enum):
@@ -79,6 +80,7 @@ def post(
                     retry_after = float(json.loads(e.read().decode()).get("retry_after", 1.0))
                 except (ValueError, AttributeError, TypeError):
                     pass
+                retry_after = min(max(retry_after, 0.0), MAX_RETRY_AFTER)
                 log.warning("rate limited by %s; retrying after %.1fs", safe, retry_after)
                 sleep(retry_after)
                 continue
