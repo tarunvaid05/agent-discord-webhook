@@ -29,7 +29,9 @@ adw install --webhook-url https://discord.com/api/webhooks/...
 `adw install` writes `~/.config/agent-discord-webhook/config.toml` (mode 0600)
 and adds hook entries to `~/.claude/settings.json` and `~/.codex/hooks.json`.
 Existing hooks are kept. Each file is backed up to `<file>.bak-<timestamp>`
-first. Re-running updates the entries in place. Run `adw test` to post a
+first. Re-running updates the hook entries in place and keeps your config,
+replacing only the `webhook_url` line; without `--webhook-url` it reuses the
+configured URL. The URL must start with `https://`. Run `adw test` to post a
 sample message.
 
 ### Getting a webhook URL
@@ -60,7 +62,7 @@ Settings, and choose All Messages. Make sure the server is not muted.
 
 | Command | Does |
 |---|---|
-| `adw install [--webhook-url URL]` | Writes config, merges hooks into both agents' settings files. Prompts for the URL when run interactively without the flag. |
+| `adw install [--webhook-url URL]` | Writes config, merges hooks into both agents' settings files. Without the flag, reuses the configured URL or prompts for one when run interactively. |
 | `adw uninstall` | Removes only the hook entries adw added. Leaves config and state. |
 | `adw test` | Posts a sample two-block message. |
 | `adw status [--log]` | Config path, hook install state per tool, live sessions with aliases, mute state, spool depth. `--log` appends the last 50 log lines. |
