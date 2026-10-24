@@ -201,10 +201,13 @@ def run_flusher(
 
 
 def spawn_detached_flusher(env: Mapping[str, str]) -> None:
+    # -P and cwd="/" keep the agent's working directory off sys.path: a project json.py or
+    # logging.py must not shadow the stdlib in the flusher, and the repo dir must not run its
+    # own working tree instead of the installed package.
     subprocess.Popen(
-        [sys.executable, "-m", "agent_discord_webhook.cli", "flush"],
+        [sys.executable, "-P", "-m", "agent_discord_webhook.cli", "flush"],
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True, env=dict(env), close_fds=True,
+        start_new_session=True, env=dict(env), close_fds=True, cwd="/",
     )
 
 

@@ -132,3 +132,20 @@ def test_flusher_stops_looping_when_post_keeps_failing(tmp_path):
         spool_append(sd, Block(1, "claude", "proj", "done", "x"))
         run_flusher(sd, load_config(env), logging.getLogger("t"), sleep=lambda s: None)
         assert spool_depth(sd) == 1 and len(fd.requests) == 3
+
+
+def test_detached_flusher_ignores_stdlib_shadowing_files_in_cwd(tmp_path):
+    poison = tmp_path / "cwd"
+    poison.mkdir()
+    (poison / "json.py").write_text('raise SystemExit("shadowed stdlib json")\n')
+    with FakeDiscord() as fd:
+        env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_ENTRYPOINT")}
+        env |= env_for(tmp_path, fd.url)
+        r = subprocess.run(["uv", "run", "--project", str(REPO_ROOT), "adw", "hook", "--tool", "codex"],
+                           input=stop_payload("S9", "hello"), capture_output=True, text=True, env=env, cwd=poison,
+                           timeout=60)
+        assert r.returncode == 0 and r.stdout == "" and r.stderr == ""
+        deadline = time.monotonic() + 15
+        while not fd.requests and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert fd.requests, "detached flusher never posted"
