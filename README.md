@@ -62,7 +62,7 @@ Settings, and choose All Messages. Make sure the server is not muted.
 | `webhook_url` | | Discord webhook URL. `ADW_WEBHOOK_URL` in the environment overrides it. |
 | `tail_chars` | `100` | How many trailing characters of the agent's last message to show. |
 | `min_turn_seconds` | `45` | Turns shorter than this are not reported immediately. |
-| `batch_window_seconds` | `3` | How long the flusher waits to combine notifications from several sessions. |
+| `batch_window_seconds` | `0` | Seconds the flusher waits before posting, to combine notifications from sessions finishing together. `0` posts at once. |
 | `always_notify` | `false` | Report every turn regardless of length. |
 | `skip_cwd_patterns` | `[]` | Glob patterns on the session's working directory; matching sessions never notify. |
 

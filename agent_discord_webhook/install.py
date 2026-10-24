@@ -35,7 +35,7 @@ CONFIG_TEMPLATE = """\
 webhook_url = {url}
 tail_chars = 100
 min_turn_seconds = 45
-batch_window_seconds = 3
+batch_window_seconds = 0
 always_notify = false
 # skip_cwd_patterns = ["/tmp/*"]
 """

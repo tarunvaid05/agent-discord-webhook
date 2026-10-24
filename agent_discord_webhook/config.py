@@ -20,7 +20,7 @@ class Config:
     webhook_url: str | None
     tail_chars: int = 100
     min_turn_seconds: int = 45
-    batch_window_seconds: float = 3.0
+    batch_window_seconds: float = 0.0
     always_notify: bool = False
     skip_cwd_patterns: tuple[str, ...] = ()
 
