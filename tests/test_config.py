@@ -6,7 +6,7 @@ def test_defaults_when_no_file(tmp_path):
     cfg = load_config(env)
     assert cfg == Config(webhook_url=None)
     assert cfg.tail_chars == 100 and cfg.min_turn_seconds == 45
-    assert cfg.batch_window_seconds == 3.0 and cfg.always_notify is False
+    assert cfg.batch_window_seconds == 0.0 and cfg.always_notify is False
 
 
 def test_file_values_and_env_override(tmp_path):
