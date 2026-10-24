@@ -149,3 +149,14 @@ def test_detached_flusher_ignores_stdlib_shadowing_files_in_cwd(tmp_path):
         while not fd.requests and time.monotonic() < deadline:
             time.sleep(0.1)
         assert fd.requests, "detached flusher never posted"
+
+
+def test_hook_failure_log_names_exception_type_without_its_message(tmp_path):
+    env = env_for(tmp_path, "https://discord.com/api/webhooks/1/secret-token")
+
+    def exploding_post(url, *a, **k):
+        raise RuntimeError(f"boom {url}")
+
+    assert run_hook("claude", io.StringIO(stop_payload("S1", "x")), env, **NOOP | {"post": exploding_post}) == 0
+    text = (Path(env["ADW_STATE_DIR"]) / "log").read_text()
+    assert "RuntimeError" in text and "secret-token" not in text

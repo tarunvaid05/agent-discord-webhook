@@ -23,6 +23,7 @@ from .state import SessionStore, clear_mute, mute_state, set_mute, spool_depth
 DEFAULT_CLAUDE_SETTINGS = "~/.claude/settings.json"
 DEFAULT_CODEX_HOOKS = "~/.codex/hooks.json"
 URL_REQUIRED = "webhook URL required: pass --webhook-url or run interactively"
+URL_NOT_HTTPS = "webhook URL must start with https://"
 _DURATION = re.compile(r"^(\d+)([smhd])$")
 _UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
@@ -79,6 +80,9 @@ def cmd_install(args: argparse.Namespace, stdin: IO[str], stdout: IO[str], env: 
         if not url:
             print(URL_REQUIRED, file=sys.stderr)
             return 2
+    if not url.startswith("https://"):
+        print(URL_NOT_HTTPS, file=sys.stderr)
+        return 2
     write_config(config_path(env), url)
     state_dir(env)
     exe = adw_executable()
@@ -168,7 +172,11 @@ def main(
     if args.cmd == "hook":
         return run_hook(args.tool, stdin, env, now=now, detach=True)
     if args.cmd == "flush":
-        run_flusher(state_dir(env), load_config(env), get_logger(env))
+        log = get_logger(env)
+        try:
+            run_flusher(state_dir(env), load_config(env), log)
+        except Exception as e:
+            log.error("flush failed (%s)", type(e).__name__)
         return 0
     if args.cmd == "install":
         return cmd_install(args, stdin, stdout, env, datetime.fromtimestamp(now()))

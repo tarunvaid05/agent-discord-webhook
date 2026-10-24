@@ -92,3 +92,17 @@ def test_status_lists_sessions_and_log(tmp_path):
     out = io.StringIO()
     main(["status", "--log"], stdout=out, env=env, now=lambda: 1001.0)
     assert "[1] claude /home/u/proj" in out.getvalue() and "hello-log-line" in out.getvalue()
+
+
+def test_flush_command_survives_bad_config(tmp_path):
+    env = base_env(tmp_path)
+    (tmp_path / "config.toml").write_text("webhook_url = \n")
+    assert main(["flush"], stdout=io.StringIO(), env=env) == 0
+    assert "TOMLDecodeError" in (Path(env["ADW_STATE_DIR"]) / "log").read_text()
+
+
+def test_install_rejects_non_https_url(tmp_path, capsys):
+    env = base_env(tmp_path)
+    assert main(["install", "--webhook-url", "http://discord.com/api/webhooks/1/s"], stdout=io.StringIO(), env=env) == 2
+    assert "https://" in capsys.readouterr().err
+    assert not (tmp_path / "config.toml").exists() and not (tmp_path / "claude.json").exists()

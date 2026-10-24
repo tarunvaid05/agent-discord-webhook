@@ -28,6 +28,10 @@ class FakeDiscord:
                 except ValueError:
                     fake.requests.append({"raw": body.decode(errors="replace")})
                 status = fake.script.pop(0) if fake.script else 204
+                if status == -1:  # malformed response: client raises http.client.BadStatusLine
+                    self.wfile.write(b"garbage\r\n\r\n")
+                    self.close_connection = True
+                    return
                 self.send_response(status)
                 if status == 429:
                     payload = json.dumps({"retry_after": fake.retry_after}).encode()

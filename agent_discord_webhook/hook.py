@@ -258,6 +258,7 @@ def run_hook(
             spawn_detached_flusher(env)
         else:
             run_flusher(sd, config, log, sleep=sleep, post=post)
-    except Exception:
-        log.exception("hook failed")
+    except Exception as e:
+        # Type name only: an exception message may carry the webhook URL.
+        log.error("hook failed (%s)", type(e).__name__)
     return 0

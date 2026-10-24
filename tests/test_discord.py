@@ -52,3 +52,17 @@ def test_429_retry_after_is_capped_at_10s():
     with FakeDiscord(script=[429], retry_after=120.0) as fd:
         assert post(fd.url, "x", "Claude", logging.getLogger("t"), sleep=slept.append)
         assert slept == [10.0] and len(fd.requests) == 2
+
+
+def test_scheme_less_url_is_permanent_and_never_logged(caplog):
+    url = "discord.com/api/webhooks/123/secret-token"
+    with caplog.at_level(logging.DEBUG, logger="t"):
+        assert post(url, "x", "Claude", logging.getLogger("t"), sleep=lambda s: None) == Outcome.PERMANENT
+    assert "secret-token" not in caplog.text and "ValueError" in caplog.text
+
+
+def test_malformed_http_response_is_retried_like_a_network_error():
+    slept = []
+    with FakeDiscord(script=[-1]) as fd:
+        assert post(fd.url, "x", "Claude", logging.getLogger("t"), sleep=slept.append) == Outcome.OK
+        assert slept == [2.0] and len(fd.requests) == 2

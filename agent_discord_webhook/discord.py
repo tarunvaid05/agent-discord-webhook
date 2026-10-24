@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import enum
+import http.client
 import json
 import logging
 import time
@@ -58,11 +59,11 @@ def post(
     rate_limited_once = False
     network_failures = 0
     while True:
-        req = urllib.request.Request(
-            webhook_url, data=body, method="POST",
-            headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
-        )
         try:
+            req = urllib.request.Request(
+                webhook_url, data=body, method="POST",
+                headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
+            )
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 status = resp.status
                 resp.read()
@@ -91,7 +92,12 @@ def post(
                 continue
             log.error("post to %s failed with status %d", safe, status)
             return Outcome.RETRYABLE if status == 429 or status >= 500 else Outcome.PERMANENT
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
+        except ValueError as e:
+            # Not a usable URL (no scheme, bad port): no retry will help, and the raw
+            # message would echo the URL.
+            log.error("post to %s failed: %s (bad webhook URL)", safe, type(e).__name__)
+            return Outcome.PERMANENT
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as e:
             if network_failures < NETWORK_RETRIES:
                 network_failures += 1
                 log.warning("network error %s posting to %s; retry %d", _safe_error(e), safe, network_failures)
