@@ -1,7 +1,8 @@
 # agent-discord-webhook
 
-Push notifications on your phone when a local Claude Code or Codex CLI session
-finishes a turn or is waiting on you. Each message names the session and shows
+Discord notifications when a local Claude Code or Codex CLI session finishes a
+turn or is waiting on you, which gives you push notifications on mobile and
+desktop. Each message names the session and shows
 the tail of what the agent said. Several sessions finishing together become one
 message. Short interactive turns are not reported unless you walk away.
 
