@@ -16,6 +16,23 @@ NO_MESSAGE = "(no message)"
 
 QUESTION_TYPES = ("agent_needs_input", "elicitation_dialog")
 
+# Prompts the agent host injects as user turns without anyone typing. Claude Code
+# wakes the main agent with a <task-notification> when a background subagent or
+# shell finishes, and records built-in slash commands as <local-command-*> /
+# <command-name> turns. UserPromptSubmit fires for these like a real prompt.
+AUTOMATIC_PROMPT_PREFIXES = (
+    "<task-notification>",
+    "<local-command-",
+    "<command-name>",
+    "<system-reminder>",
+)
+
+
+def is_automatic_prompt(prompt: object) -> bool:
+    if not isinstance(prompt, str):
+        return False
+    return prompt.lstrip().startswith(AUTOMATIC_PROMPT_PREFIXES)
+
 
 def summarize_tool_input(tool_input: object) -> str:
     if isinstance(tool_input, Mapping) and "command" in tool_input:
@@ -79,7 +96,15 @@ def handle_event(
         return None
 
     if event == "UserPromptSubmit":
-        s.last_prompt_at = now
+        if is_automatic_prompt(payload.get("prompt")):
+            # A subagent finished and woke the main agent. The person's turn is
+            # still the one they typed, so keep its start time and hold the
+            # Stop that follows; the idle notification reports the turn once
+            # the whole job settles.
+            s.auto_turn = True
+        else:
+            s.auto_turn = False
+            s.last_prompt_at = now
         return None
 
     if event == "Stop":
@@ -87,8 +112,10 @@ def handle_event(
         s.last_assistant_message = message if isinstance(message, str) else ""
         s.last_stop_at = now
         s.notified_for_stop = False
+        if s.auto_turn or muted_done:
+            return None
         long_enough = s.last_prompt_at is None or (now - s.last_prompt_at) >= config.min_turn_seconds
-        if not (config.always_notify or long_enough) or muted_done:
+        if not (config.always_notify or long_enough):
             return None
         s.notified_for_stop = True
         return _done_block(s, tool, _done_body(s.last_assistant_message, config.tail_chars))

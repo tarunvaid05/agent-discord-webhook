@@ -97,6 +97,13 @@ you have not typed anything, and that sends the pending `done`. A long turn is
 never reported twice. Codex has no idle event, so short Codex turns are only
 reported with `always_notify = true`.
 
+Subagents: when a background agent or shell finishes, Claude Code wakes the
+main agent with a `<task-notification>` prompt that nobody typed. Turns started
+that way are never reported when they end, however long they ran, because the
+job is usually still going. The idle notification reports the session once it
+settles, with the duration measured from the last prompt you typed. Built-in
+slash commands (`/clear` and friends) are treated the same way.
+
 Permission prompts and questions are never suppressed and still send while
 muted, unless you used `adw mute --all`.
 

@@ -34,6 +34,7 @@ class Session:
     last_stop_at: float | None = None
     last_assistant_message: str = ""
     notified_for_stop: bool = False
+    auto_turn: bool = False  # current turn was started by an injected prompt (task notification), not a person
     headless: bool = False  # classified unattended once (codex exec); later events are dropped
 
     def to_dict(self) -> dict:

@@ -121,3 +121,82 @@ def test_missing_session_id_or_cwd_does_not_crash(tmp_path):
     store, s = mk(tmp_path)
     assert handle_event("claude", {"hook_event_name": "Stop"}, s, store, CFG, NOMUTE, 1.0) is None
     assert s == {}
+
+
+IDLE = ev("Notification", message="Claude is waiting for your input", **{NOTIFICATION_TYPE_KEY: "idle_prompt"})
+TASK_NOTE = "<task-notification>\n<task-id>a0332e2ef3366fc6b</task-id>\n<status>completed</status>\n</task-notification>"
+
+
+def test_task_notification_prompt_is_not_a_human_prompt(tmp_path):
+    store, s = mk(tmp_path)
+    handle_event("claude", ev("UserPromptSubmit", prompt="run the plan"), s, store, CFG, NOMUTE, 1000.0)
+    handle_event("claude", ev("UserPromptSubmit", prompt=TASK_NOTE), s, store, CFG, NOMUTE, 1500.0)
+    assert s["S1"].last_prompt_at == 1000.0
+    assert s["S1"].auto_turn is True
+
+
+def test_automatic_turn_stop_is_held_even_when_long(tmp_path):
+    store, s = mk(tmp_path)
+    handle_event("claude", ev("UserPromptSubmit", prompt="run the plan"), s, store, CFG, NOMUTE, 1000.0)
+    handle_event("claude", ev("UserPromptSubmit", prompt=TASK_NOTE), s, store, CFG, NOMUTE, 1500.0)
+    assert handle_event("claude", ev("Stop", last_assistant_message="Waiting."), s, store, CFG, NOMUTE, 1560.0) is None
+    assert s["S1"].notified_for_stop is False
+
+
+def test_automatic_turn_held_despite_always_notify(tmp_path):
+    store, s = mk(tmp_path)
+    cfg = dataclasses.replace(CFG, always_notify=True)
+    handle_event("claude", ev("UserPromptSubmit", prompt="go"), s, store, cfg, NOMUTE, 0.0)
+    handle_event("claude", ev("UserPromptSubmit", prompt=TASK_NOTE), s, store, cfg, NOMUTE, 100.0)
+    assert handle_event("claude", ev("Stop", last_assistant_message="Waiting."), s, store, cfg, NOMUTE, 160.0) is None
+
+
+def test_idle_after_automatic_turns_reports_once_from_human_prompt(tmp_path):
+    store, s = mk(tmp_path)
+    handle_event("claude", ev("UserPromptSubmit", prompt="run the plan"), s, store, CFG, NOMUTE, 1000.0)
+    for t in (1100.0, 1200.0, 1300.0):
+        handle_event("claude", ev("UserPromptSubmit", prompt=TASK_NOTE), s, store, CFG, NOMUTE, t)
+        assert handle_event("claude", ev("Stop", last_assistant_message=f"Waiting {t}."), s, store, CFG, NOMUTE, t + 50) is None
+    b = handle_event("claude", IDLE, s, store, CFG, NOMUTE, 1410.0)
+    assert b == Block(1, "claude", "proj", "done", "Waiting 1300.0.", 350.0)
+    assert handle_event("claude", IDLE, s, store, CFG, NOMUTE, 1470.0) is None
+
+
+def test_human_prompt_after_automatic_turns_resets_turn(tmp_path):
+    store, s = mk(tmp_path)
+    handle_event("claude", ev("UserPromptSubmit", prompt="run the plan"), s, store, CFG, NOMUTE, 1000.0)
+    handle_event("claude", ev("UserPromptSubmit", prompt=TASK_NOTE), s, store, CFG, NOMUTE, 1100.0)
+    handle_event("claude", ev("Stop", last_assistant_message="Waiting."), s, store, CFG, NOMUTE, 1150.0)
+    handle_event("claude", ev("UserPromptSubmit", prompt="thanks, now ship it"), s, store, CFG, NOMUTE, 2000.0)
+    assert s["S1"].auto_turn is False
+    b = handle_event("claude", ev("Stop", last_assistant_message="Shipped."), s, store, CFG, NOMUTE, 2060.0)
+    assert b == Block(1, "claude", "proj", "done", "Shipped.", 60.0)
+
+
+def test_other_injected_prompts_are_automatic(tmp_path):
+    from agent_discord_webhook.hook import is_automatic_prompt
+
+    assert is_automatic_prompt("<task-notification>\n<task-id>x</task-id>")
+    assert is_automatic_prompt("  <task-notification>")
+    assert is_automatic_prompt("<local-command-caveat>The command below was run directly")
+    assert is_automatic_prompt("<command-name>/clear</command-name>")
+    assert is_automatic_prompt("<system-reminder>foo</system-reminder>")
+    assert not is_automatic_prompt("<pasted_content id=\"x\">hello</pasted_content>")
+    assert not is_automatic_prompt("fix the <div> in index.html")
+    assert not is_automatic_prompt("")
+    assert not is_automatic_prompt(None)
+
+
+def test_prompt_without_text_counts_as_human(tmp_path):
+    store, s = mk(tmp_path)
+    handle_event("claude", ev("UserPromptSubmit"), s, store, CFG, NOMUTE, 1000.0)
+    assert s["S1"].last_prompt_at == 1000.0
+    assert s["S1"].auto_turn is False
+
+
+def test_session_round_trips_auto_turn_and_defaults_old_records():
+    from agent_discord_webhook.state import Session
+
+    s = Session(alias=1, tool="claude", cwd="/p", last_seen_at=1.0, auto_turn=True)
+    assert Session.from_dict(s.to_dict()).auto_turn is True
+    assert Session.from_dict({"alias": 1, "tool": "claude", "cwd": "/p", "last_seen_at": 1.0}).auto_turn is False
