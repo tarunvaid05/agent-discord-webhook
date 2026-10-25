@@ -200,3 +200,74 @@ def test_session_round_trips_auto_turn_and_defaults_old_records():
     s = Session(alias=1, tool="claude", cwd="/p", last_seen_at=1.0, auto_turn=True)
     assert Session.from_dict(s.to_dict()).auto_turn is True
     assert Session.from_dict({"alias": 1, "tool": "claude", "cwd": "/p", "last_seen_at": 1.0}).auto_turn is False
+
+
+def _ev_t(name, **k):
+    return ev(name, transcript_path="/t.jsonl", **k)
+
+
+def test_stop_held_while_background_tasks_pending_even_after_human_prompt(tmp_path):
+    store, s = mk(tmp_path)
+    handle_event("claude", _ev_t("UserPromptSubmit", prompt="go"), s, store, CFG, NOMUTE, 1000.0)
+    b = handle_event("claude", _ev_t("Stop", last_assistant_message="Dispatched. Waiting."), s, store, CFG, NOMUTE, 1050.0,
+                     count_pending=lambda p: 1)
+    assert b is None
+    assert s["S1"].notified_for_stop is False
+    assert "pending" in s["S1"].last_decision
+
+
+def test_stop_after_task_notification_reports_at_once_when_nothing_pending(tmp_path):
+    store, s = mk(tmp_path)
+    handle_event("claude", _ev_t("UserPromptSubmit", prompt="go"), s, store, CFG, NOMUTE, 1000.0)
+    assert handle_event("claude", _ev_t("Stop", last_assistant_message="Waiting."), s, store, CFG, NOMUTE, 1050.0,
+                        count_pending=lambda p: 1) is None
+    handle_event("claude", _ev_t("UserPromptSubmit", prompt=TASK_NOTE), s, store, CFG, NOMUTE, 1600.0)
+    b = handle_event("claude", _ev_t("Stop", last_assistant_message="Plan complete."), s, store, CFG, NOMUTE, 1630.0,
+                     count_pending=lambda p: 0)
+    assert b == Block(1, "claude", "proj", "done", "Plan complete.", 630.0)
+
+
+def test_stop_after_task_notification_still_held_when_more_pending(tmp_path):
+    store, s = mk(tmp_path)
+    handle_event("claude", _ev_t("UserPromptSubmit", prompt="go"), s, store, CFG, NOMUTE, 1000.0)
+    handle_event("claude", _ev_t("UserPromptSubmit", prompt=TASK_NOTE), s, store, CFG, NOMUTE, 1600.0)
+    assert handle_event("claude", _ev_t("Stop", last_assistant_message="Next one running."), s, store, CFG, NOMUTE,
+                        1630.0, count_pending=lambda p: 2) is None
+
+
+def test_idle_held_while_pending_then_reports_when_clear(tmp_path):
+    store, s = mk(tmp_path)
+    handle_event("claude", _ev_t("UserPromptSubmit", prompt="go"), s, store, CFG, NOMUTE, 1000.0)
+    handle_event("claude", _ev_t("Stop", last_assistant_message="Waiting."), s, store, CFG, NOMUTE, 1050.0,
+                 count_pending=lambda p: 1)
+    idle = _ev_t("Notification", message="m", **{NOTIFICATION_TYPE_KEY: "idle_prompt"})
+    assert handle_event("claude", idle, s, store, CFG, NOMUTE, 1110.0, count_pending=lambda p: 1) is None
+    b = handle_event("claude", idle, s, store, CFG, NOMUTE, 1170.0, count_pending=lambda p: 0)
+    assert b == Block(1, "claude", "proj", "done", "Waiting.", 50.0)
+
+
+def test_unknown_pending_falls_back_to_auto_turn_hold(tmp_path):
+    store, s = mk(tmp_path)
+    handle_event("claude", _ev_t("UserPromptSubmit", prompt="go"), s, store, CFG, NOMUTE, 1000.0)
+    handle_event("claude", _ev_t("UserPromptSubmit", prompt=TASK_NOTE), s, store, CFG, NOMUTE, 1600.0)
+    assert handle_event("claude", _ev_t("Stop", last_assistant_message="x"), s, store, CFG, NOMUTE, 1660.0,
+                        count_pending=lambda p: None) is None
+    assert "automatic" in s["S1"].last_decision
+
+
+def test_codex_never_consults_transcript(tmp_path):
+    store, s = mk(tmp_path)
+    handle_event("codex", _ev_t("UserPromptSubmit", prompt="go"), s, store, CFG, NOMUTE, 0.0)
+
+    def boom(p):
+        raise AssertionError("should not be called")
+
+    assert handle_event("codex", _ev_t("Stop", last_assistant_message="done"), s, store, CFG, NOMUTE, 60.0,
+                        count_pending=boom) is not None
+
+
+def test_short_turn_decision_recorded(tmp_path):
+    store, s = mk(tmp_path)
+    handle_event("claude", ev("UserPromptSubmit", prompt="hi"), s, store, CFG, NOMUTE, 0.0)
+    handle_event("claude", ev("Stop", last_assistant_message="yo"), s, store, CFG, NOMUTE, 5.0)
+    assert "short" in s["S1"].last_decision

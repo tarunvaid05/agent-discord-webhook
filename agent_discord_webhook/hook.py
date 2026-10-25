@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from .config import Config
 from .format import Block, collapse_whitespace, head, strip_code_fences, tail
 from .state import Session, SessionStore
+from .transcript import pending_background_tasks
 
 NOTIFICATION_TYPE_KEY = "notification_type"
 BLOCKED_BODY_CAP = 500
@@ -64,6 +65,17 @@ def _blocked_body(text: str) -> str:
     return head(collapse_whitespace(text), BLOCKED_BODY_CAP)
 
 
+def _pending(tool: str, payload: Mapping[str, object], count_pending: Callable[[str], int | None]) -> int | None:
+    """Background tasks still running, from the Claude transcript. None when unknown."""
+    path = payload.get("transcript_path")
+    if tool != "claude" or not isinstance(path, str) or not path:
+        return None
+    try:
+        return count_pending(path)
+    except Exception:
+        return None
+
+
 def _done_block(s: Session, tool: str, body: str) -> Block:
     duration = None
     if s.last_prompt_at is not None and s.last_stop_at is not None:
@@ -79,6 +91,8 @@ def handle_event(
     config: Config,
     muted: tuple[bool, bool],
     now: float,
+    *,
+    count_pending: Callable[[str], int | None] = pending_background_tasks,
 ) -> Block | None:
     event = str(payload.get("hook_event_name", ""))
     session_id = payload.get("session_id")
@@ -112,12 +126,23 @@ def handle_event(
         s.last_assistant_message = message if isinstance(message, str) else ""
         s.last_stop_at = now
         s.notified_for_stop = False
-        if s.auto_turn or muted_done:
+        pending = _pending(tool, payload, count_pending)
+        if pending:
+            s.last_decision = f"held done: {pending} background task(s) pending"
+            return None
+        if pending is None and s.auto_turn:
+            # No transcript to check, so assume the job that woke the agent is not over.
+            s.last_decision = "held done: automatic turn, pending tasks unknown"
+            return None
+        if muted_done:
+            s.last_decision = "dropped done: muted"
             return None
         long_enough = s.last_prompt_at is None or (now - s.last_prompt_at) >= config.min_turn_seconds
         if not (config.always_notify or long_enough):
+            s.last_decision = "held done: short turn"
             return None
         s.notified_for_stop = True
+        s.last_decision = "reported done at stop"
         return _done_block(s, tool, _done_body(s.last_assistant_message, config.tail_chars))
 
     if event == "Notification":
@@ -125,9 +150,17 @@ def handle_event(
         message = payload.get("message")
         text = message if isinstance(message, str) else ""
         if ntype == "idle_prompt":
-            if s.notified_for_stop or s.last_stop_at is None or muted_done:
+            if s.notified_for_stop or s.last_stop_at is None:
+                return None
+            if muted_done:
+                s.last_decision = "dropped done: muted"
+                return None
+            pending = _pending(tool, payload, count_pending)
+            if pending:
+                s.last_decision = f"held done at idle: {pending} background task(s) pending"
                 return None
             s.notified_for_stop = True
+            s.last_decision = "reported done at idle"
             return _done_block(s, tool, _done_body(s.last_assistant_message, config.tail_chars))
         if ntype == "permission_prompt":
             kind = "permission"
@@ -288,7 +321,10 @@ def run_hook(
         with store.locked() as sessions:
             store.sweep(sessions, t)
             block = handle_event(tool, payload, sessions, store, config, mute_state(sd, t), t)
+            decision = sessions[session_id].last_decision if isinstance(session_id, str) and session_id in sessions else ""
         if block is None:
+            if decision and payload.get("hook_event_name") in ("Stop", "Notification"):
+                log.debug("%s session=%s", decision, session_id)
             return 0
         spool_append(sd, block)
         log.debug("spooled %s for [%d] %s", block.kind, block.alias, block.dirname)

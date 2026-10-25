@@ -35,6 +35,7 @@ class Session:
     last_assistant_message: str = ""
     notified_for_stop: bool = False
     auto_turn: bool = False  # current turn was started by an injected prompt (task notification), not a person
+    last_decision: str = ""  # why the last Stop/idle was or was not reported (for `adw status --log`)
     headless: bool = False  # classified unattended once (codex exec); later events are dropped
 
     def to_dict(self) -> dict:
